@@ -5,13 +5,22 @@
     (setq package-user-dir directory)))
 
 (require 'package)
+(require 'package-vc)
 
 (setq package-archives
-      '(("gnu" . "https://elpa.gnu.org/packages/")
-        ("nongnu" . "https://elpa.nongnu.org/nongnu/")
-        ("melpa" . "https://melpa.org/packages/")))
+      '(("melpa" . "https://melpa.org/packages/")))
 
 (package-initialize)
+
+;; Current with-editor releases require compat 31.  Installing compat from its
+;; pinned official repository avoids intermittent GNU/NonGNU archive-index TLS
+;; failures on the Windows runner while keeping the dependency reproducible.
+(unless (package-installed-p 'compat '(31 0))
+  (package-vc-install
+   '(compat :url "https://github.com/emacs-compat/compat"
+            :vc-backend Git)
+   "df03e91f1fc47503ca71e11dd507ed18ca8b5ab0"))
+
 (package-refresh-contents)
 
 (dolist (dependency '(anaphora dash deferred f mocker polymode

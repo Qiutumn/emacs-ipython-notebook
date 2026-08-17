@@ -16,9 +16,10 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        emacs_version: [27.2, 28.2, 29.1]
+        emacs_version: [28.2, 29.1, 30.2]
         python-version: [3.8]
 
     steps:

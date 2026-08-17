@@ -130,6 +130,14 @@ is not found."
           (should (equal (plist-get o1 :prompt_number) 1))
           (should (equal (plist-get o1 :text) "2")))))))
 
+(ert-deftest ein:notebook-to-json-upgrades-cell-id-format ()
+  (with-current-buffer (ein:testing-notebook-make-empty)
+    (setf (ein:$notebook-nbformat ein:%notebook%) 4
+          (ein:$notebook-nbformat-minor ein:%notebook%) 2)
+    (should (= (alist-get 'nbformat_minor
+                          (ein:notebook-to-json ein:%notebook%))
+               5))))
+
 (ert-deftest ein:notebook-from-json-empty ()
   (with-current-buffer (ein:testing-notebook-make-empty)
     (should (ein:$notebook-p ein:%notebook%))

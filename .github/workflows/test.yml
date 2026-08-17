@@ -66,3 +66,38 @@ jobs:
         pip install yq
         make quick
       continue-on-error: ${{ matrix.emacs_version == 'snapshot' }}
+
+  native-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Python 3.13
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Emacs 30.2
+      uses: jcs090218/setup-emacs@master
+      with:
+        version: 30.2
+
+    - name: Install Jupyter
+      shell: pwsh
+      run: python -m pip install "jupyter-server>=2,<3" "nbformat>=5,<6" ipykernel
+
+    - name: Install Emacs test dependencies
+      shell: pwsh
+      run: emacs --batch -Q -l test/install-test-dependencies.el
+
+    - name: Unit tests
+      shell: pwsh
+      run: emacs --batch -Q -l test/run-unit-tests.el
+
+    - name: Native Windows Jupyter integration
+      shell: pwsh
+      run: |
+        $env:EIN_TEST_PYTHON = (Get-Command python).Source
+        emacs --batch -Q -l test/windows-integration.el

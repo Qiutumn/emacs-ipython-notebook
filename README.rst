@@ -7,7 +7,7 @@
    :alt: Kaggle Notebooks in AWS
 
 Emacs IPython Notebook (EIN), despite its name, is a jupyter client for all
-languages.  It does not work under non-WSL Windows environments.
+languages.  This fork supports native Windows as well as Unix-like systems.
 
 As of 2023, EIN has been sunset for a number of years having been
 unable to keep up with jupyter's web-first ecosystem.  Even during
@@ -23,8 +23,8 @@ It features full-fledged undo and relies on "mode overlays"
 instead of the complex and fragile polymode.
 
 .. |build-status|
-   image:: https://github.com/millejoh/emacs-ipython-notebook/workflows/CI/badge.svg
-   :target: https://github.com/millejoh/emacs-ipython-notebook/actions
+   image:: https://github.com/Qiutumn/emacs-ipython-notebook/workflows/CI/badge.svg
+   :target: https://github.com/Qiutumn/emacs-ipython-notebook/actions
    :alt: Build Status
 .. |melpa-dev|
    image:: https://melpa.org/packages/ein-badge.svg
@@ -55,6 +55,19 @@ For jupyterlab 3.0+, reconfigure the subcommand from "notebook" to "server".
 ::
 
    M-x customize-option RET ein:jupyter-server-use-subcommand RET
+
+On native Windows, if ``jupyter.exe`` is not on Emacs' ``exec-path``, point EIN
+at the Python installation that provides Jupyter.  Fixed command arguments are
+supported directly, so no shell or WSL translation is needed::
+
+   (setq ein:jupyter-server-command
+         '("C:/Path/To/python.exe" "-m" "jupyter")
+         ein:jupyter-server-use-subcommand "server")
+
+The Windows CI job runs the complete ERT suite and an end-to-end test that
+starts Jupyter, logs in, opens a notebook, starts a kernel, executes a cell,
+saves the notebook, and shuts the server down.  The fork is locally validated
+with native Windows Emacs 30.2 and Jupyter Server 2.20.
 
 Usage
 =====
@@ -104,7 +117,7 @@ How do I...
 ... get IDE-like behavior?
    You can't.  EIN's architecture is fundamentally incompatible with LSP.
 
-.. _Issues: https://github.com/millejoh/emacs-ipython-notebook/issues
+.. _Issues: https://github.com/Qiutumn/emacs-ipython-notebook/issues
 .. _prevailing documentation: http://millejoh.github.io/emacs-ipython-notebook
 .. _spacemacs layer: https://github.com/syl20bnr/spacemacs/tree/master/layers/%2Blang/ipython-notebook
 .. _company-mode: https://github.com/company-mode/company-mode

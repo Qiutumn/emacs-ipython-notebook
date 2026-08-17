@@ -121,26 +121,31 @@ Supply ERROR-BUFFER to capture stderr."
   "Use `jupyter notebook list --json` to populate ein:%processes%"
   (clrhash ein:%processes%)
   (cl-loop for line in (condition-case err
-                           (apply #'process-lines
+                           (apply #'ein:jupyter-process-lines nil
                                   ein:jupyter-server-command
                                   (append (split-string (or ein:jupyter-server-use-subcommand ""))
                                           '("list" "--json")))
                          ;; often there is no local jupyter installation
                          (error (ein:log 'info "ein:process-refresh-processes: %s" err) nil))
            do (cl-destructuring-bind
-                  (&key pid url notebook_dir &allow-other-keys)
+                  (&key pid url notebook_dir root_dir &allow-other-keys)
                   (ein:json-read-from-string line)
-                (puthash (directory-file-name notebook_dir)
-                         (make-ein:$process :pid pid
-                                            :url (ein:url url)
-                                            :dir (directory-file-name notebook_dir))
-                         ein:%processes%))))
+                (let ((directory (or root_dir notebook_dir)))
+                  (puthash (directory-file-name directory)
+                           (make-ein:$process :pid pid
+                                              :url (ein:url url)
+                                              :dir (directory-file-name directory))
+                           ein:%processes%)))))
 
 (defun ein:process-dir-match (filename)
   "Return ein:process whose directory is prefix of FILENAME."
   (cl-loop for dir in (hash-table-keys ein:%processes%)
         when (cl-search dir filename)
         return (gethash dir ein:%processes%)))
+
+(defsubst ein:process-url-or-port (proc)
+  "Naively construct URL-OR-PORT from EIN process PROC."
+  (ein:$process-url proc))
 
 (defun ein:process-url-match (url-or-port)
   "Return ein:process whose url matches URL-OR-PORT."
@@ -150,10 +155,6 @@ Supply ERROR-BUFFER to capture stderr."
         when (and (string= (url-host parsed-url-or-port) (url-host parsed-url-proc))
                   (= (url-port parsed-url-or-port) (url-port parsed-url-proc)))
         return proc))
-
-(defsubst ein:process-url-or-port (proc)
-  "Naively construct url-or-port from ein:process PROC's port and ip fields"
-  (ein:$process-url proc))
 
 (defsubst ein:process-path (proc filename)
   "Construct path by eliding PROC's dir from filename."
@@ -187,7 +188,7 @@ CALLBACK with arity 2 (passed into `ein:notebook-open--callback')."
                                            (ein:notebook-open url-or-port
                                                               path* nil callback*))
                                          path callback)))
-        (ein:jupyter-server-start (executable-find ein:jupyter-server-command)
+        (ein:jupyter-server-start ein:jupyter-server-command
                                   nbdir nil callback2)))))
 
 (defun ein:process-open-notebook (&optional filename buffer-callback)

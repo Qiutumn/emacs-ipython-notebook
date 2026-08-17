@@ -353,7 +353,7 @@ notebook buffer then the user will be prompted to select an opened notebook."
                                 (list notebook))
     (cl-loop repeat 10
           until (null (ein:$kernel-websocket (ein:$notebook-kernel notebook)))
-          do (sleep-for 0 500)
+           do (sleep-for 0.5)
           finally return (ein:notebook-open (ein:$notebook-url-or-port notebook)
                                             (ein:$notebook-notebook-path notebook)))))
 
@@ -490,7 +490,13 @@ This is equivalent to do ``C-c`` in the console program."
       (setf (alist-get 'metadata data)
             (plist-put it :name (ein:$notebook-notebook-name notebook))))
     (awhen (ein:$notebook-nbformat-minor notebook)
-      (push `(nbformat_minor . ,it) data))
+      ;; EIN serializes stable cell IDs.  They became valid in nbformat 4.5,
+      ;; so older v4 notebooks must be upgraded when saved.
+      (push `(nbformat_minor
+              . ,(if (= (ein:$notebook-nbformat notebook) 4)
+                     (max 5 it)
+                   it))
+            data))
     (push `(nbformat . ,(ein:$notebook-nbformat notebook)) data)
     data))
 

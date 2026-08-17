@@ -63,11 +63,19 @@ Note some options like '-v' and '-network' are imposed by EIN."
   :type 'boolean)
 
 (defcustom ein:jupyter-server-command "jupyter"
-  "The default command to start a jupyter notebook server.
+  "Command used to start and inspect Jupyter servers.
+
+The value may be an executable name or a list containing an executable
+followed by fixed arguments.  The list form is useful on native Windows,
+where Jupyter may only be available through Python, for example
+`(\"C:/Python313/python.exe\" \"-m\" \"jupyter\")'.
+
 Changing this to `jupyter-notebook' requires customizing
 `ein:jupyter-server-use-subcommand' to nil."
   :group 'ein
-  :type 'string
+  :type '(choice
+          (string :tag "Executable")
+          (repeat :tag "Executable and fixed arguments" string))
   :set-after '(ein:jupyter-cannot-find-jupyter)
   :set (lambda (symbol value)
 	 (set-default symbol value)
@@ -81,7 +89,9 @@ Changing this to `jupyter-notebook' requires customizing
 (defcustom ein:jupyter-default-server-command ein:jupyter-server-command
   "Obsolete alias for `ein:jupyter-server-command'"
   :group 'ein
-  :type 'string
+  :type '(choice
+          (string :tag "Executable")
+          (repeat :tag "Executable and fixed arguments" string))
   :set-after '(ein:jupyter-server-command)
   :set (lambda (symbol value)
 	 (set-default symbol value)
@@ -109,29 +119,19 @@ with the call to the jupyter notebook."
 (defcustom ein:jupyter-default-kernel 'first-alphabetically
   "With which of ${XDG_DATA_HOME}/jupyter/kernels to create new notebooks."
   :group 'ein
-  :type (append
-         '(choice (other :tag "First alphabetically" first-alphabetically))
-         (condition-case err
-             (mapcar
-              (lambda (x) `(const :tag ,(cdr x) ,(car x)))
-              (cl-loop
-               for (k . spec) in
-               (alist-get
-                'kernelspecs
-                (let ((json-object-type 'alist))
-                  (json-read-from-string ;; intentionally not ein:json-read-from-string
-                   (shell-command-to-string
-                    (format "2>/dev/null %s kernelspec list --json"
-                            ein:jupyter-server-command)))))
-               collect `(,k . ,(alist-get 'display_name (alist-get 'spec spec)))))
-           (error (ein:log 'warn "ein:jupyter-default-kernel: %s" err)
-                  '((string :tag "Ask"))))))
+  :type '(choice
+          (const :tag "First alphabetically" first-alphabetically)
+          (string :tag "Kernel name")))
 
 (defconst *ein:jupyter-server-process-name* "ein server")
 (defconst *ein:jupyter-server-buffer-name*
   (format "*%s*" *ein:jupyter-server-process-name*))
 (defvar-local ein:jupyter-server-notebook-directory nil
   "Keep track of prevailing --notebook-dir argument.")
+
+(defsubst ein:jupyter-server-process ()
+  "Return the Emacs process object of our session."
+  (get-buffer-process (get-buffer *ein:jupyter-server-buffer-name*)))
 
 (defun ein:jupyter-running-notebook-directory ()
   (when (ein:jupyter-server-process)
@@ -148,12 +148,32 @@ with the call to the jupyter notebook."
         (t
          (symbol-name ein:jupyter-default-kernel))))
 
+(defun ein:jupyter-command-parts (&optional command)
+  "Return COMMAND as a non-empty list of strings.
+
+When COMMAND is nil, use `ein:jupyter-server-command'."
+  (let ((value (or command ein:jupyter-server-command)))
+    (cond ((stringp value) (list value))
+          ((and (consp value) (cl-every #'stringp value)) value)
+          (t (error "Invalid Jupyter command: %S" value)))))
+
+(defun ein:jupyter-resolve-command (&optional command)
+  "Return COMMAND with its executable resolved, or nil if unavailable."
+  (let* ((parts (ein:jupyter-command-parts command))
+         (program (car parts))
+         (resolved (or (executable-find program)
+                       (and (file-executable-p program)
+                            (expand-file-name program)))))
+    (when resolved
+      (cons resolved (cdr parts)))))
+
 (defun ein:jupyter-process-lines (_url-or-port command &rest args)
-  "If URL-OR-PORT registered as a k8s url, preface COMMAND ARGS
-with `kubectl exec'."
-  (if-let ((found (executable-find command)))
+  "Run COMMAND with ARGS directly and return its standard-output lines."
+  (if-let ((resolved (ein:jupyter-resolve-command command)))
       (with-temp-buffer
-        (let ((status (apply #'call-process found nil t nil args)))
+        (let* ((program (car resolved))
+               (all-args (append (cdr resolved) args))
+               (status (apply #'call-process program nil '(t nil) nil all-args)))
           (if (zerop status)
               (progn
                 (goto-char (point-min))
@@ -167,26 +187,30 @@ with `kubectl exec'."
 	          (nreverse lines)))
             (prog1 nil
               (ein:log 'warn "ein:jupyter-process-lines: '%s %s' returned %s"
-                       found (ein:join-str " " args) status)))))
+                       program (ein:join-str " " all-args) status)))))
     (prog1 nil
       (ein:log 'warn "ein:jupyter-process-lines: cannot find %s" command))))
 
-(defsubst ein:jupyter-server-process ()
-  "Return the emacs process object of our session."
-  (get-buffer-process (get-buffer *ein:jupyter-server-buffer-name*)))
-
 (defun ein:jupyter-server--run (buf user-cmd dir &optional args)
   (get-buffer-create buf)
-  (let* ((cmd (if ein:jupyter-use-containers "docker" user-cmd))
+  (let* ((command (if ein:jupyter-use-containers
+                      (ein:jupyter-resolve-command "docker")
+                    (ein:jupyter-resolve-command user-cmd)))
+         (_ (unless command
+              (error "Cannot find Jupyter command: %S" user-cmd)))
+         (cmd (car command))
          (vargs (cond (ein:jupyter-use-containers
-                       (split-string
-                        (format "run --network host -v %s:%s %s %s"
-                                dir
-                                ein:jupyter-docker-mount-point
-                                ein:jupyter-docker-additional-switches
-                                ein:jupyter-docker-image)))
+                       (append
+                        (cdr command)
+                        (split-string
+                         (format "run --network host -v %s:%s %s %s"
+                                 dir
+                                 ein:jupyter-docker-mount-point
+                                 ein:jupyter-docker-additional-switches
+                                 ein:jupyter-docker-image))))
                       (t
-                       (append (split-string (or ein:jupyter-server-use-subcommand ""))
+                       (append (cdr command)
+                               (split-string (or ein:jupyter-server-use-subcommand ""))
                                (when dir
                                  (list (format "--notebook-dir=%s"
                                                (convert-standard-filename dir))))
@@ -198,28 +222,36 @@ with `kubectl exec'."
          (proc (apply #'start-process
                       *ein:jupyter-server-process-name* buf cmd vargs)))
     (ein:log 'info "ein:jupyter-server--run: %s %s" cmd (ein:join-str " " vargs))
+    (with-current-buffer buf
+      (setq ein:jupyter-server-notebook-directory
+            (and dir (convert-standard-filename dir))))
     (set-process-query-on-exit-flag proc nil)
     proc))
 
 (defun ein:jupyter-my-url-or-port ()
-  (when-let ((my-pid (aand (ein:jupyter-server-process) (process-id it))))
-    (catch 'done
-      (dolist (json (ein:jupyter-crib-running-servers))
-        (cl-destructuring-bind (&key pid url &allow-other-keys)
-            json
-          (when (equal my-pid pid)
-            (throw 'done (ein:url url))))))))
+  (when-let ((proc (ein:jupyter-server-process))
+             (my-pid (process-id proc)))
+    (let ((my-directory (ein:jupyter-running-notebook-directory))
+          directory-matches)
+      (catch 'done
+        (dolist (json (ein:jupyter-crib-running-servers))
+          (cl-destructuring-bind (&key pid url notebook_dir root_dir
+                                       &allow-other-keys)
+              json
+            (when (equal my-pid pid)
+              (throw 'done (ein:url url)))
+            ;; Windows launchers occasionally hand the server to a child
+            ;; process, so retain directory matches as a fallback.
+            (let ((server-directory (or root_dir notebook_dir)))
+              (when (and my-directory server-directory
+                         (file-equal-p my-directory server-directory))
+                (push (ein:url url) directory-matches)))))
+        (when (= (length directory-matches) 1)
+          (car directory-matches))))))
 
 (defun ein:jupyter-server-ready-p ()
-  (when (ein:jupyter-server-process)
-    (with-current-buffer *ein:jupyter-server-buffer-name*
-      (save-excursion
-        (goto-char (point-max))
-        (re-search-backward (format "Process %s" *ein:jupyter-server-process-name*)
-                            nil "") ;; important if we start-stop-start
-        (re-search-forward
-         "\\([[:alnum:]]+\\) is\\( now\\)? running"
-         nil t)))))
+  "Return the URL when EIN's Jupyter server is accepting connections."
+  (ein:jupyter-my-url-or-port))
 
 (defun ein:jupyter-server-login-and-open (url-or-port &optional callback)
   "Log in and open a notebooklist buffer for a running jupyter notebook server.
@@ -279,7 +311,13 @@ of (PASSWORD TOKEN)."
                   (append
                    (split-string (or ein:jupyter-server-use-subcommand ""))
                    '("list" "--json")))
-           collecting (ein:json-read-from-string line)))
+           for json = (condition-case err
+                          (ein:json-read-from-string line)
+                        (error
+                         (ein:log 'warn "Ignoring non-JSON Jupyter output %S: %s"
+                                  line err)
+                         nil))
+           when json collect json))
 
 ;;;###autoload
 (defun ein:jupyter-server-start (server-command
@@ -295,7 +333,7 @@ of `ein:notebooklist-open*'.
 With \\[universal-argument] prefix arg, prompt the user for the
 server command."
   (interactive
-   (list (let ((default-command (executable-find ein:jupyter-server-command)))
+   (list (let ((default-command (ein:jupyter-resolve-command)))
            (if (and (not ein:jupyter-use-containers)
                     (or current-prefix-arg (not default-command)))
                (let (command result)
@@ -310,9 +348,9 @@ server command."
                                   (if command
                                       (format "[%s not executable] " command)
                                     ""))
-                                 nil nil ein:jupyter-server-command))))))
+                                 nil nil (car (ein:jupyter-command-parts))))))))
                  result)
-             default-command))
+             ein:jupyter-server-command))
          (let ((default-dir ein:jupyter-default-notebook-directory)
                result)
            (while (or (not result) (not (file-directory-p result)))
@@ -329,28 +367,30 @@ server command."
          nil))
   (when (ein:jupyter-server-process)
     (error "ein:jupyter-server-start: First `M-x ein:stop'"))
-  (let ((proc (ein:jupyter-server--run *ein:jupyter-server-buffer-name*
-                                       server-command
-                                       notebook-directory
-                                       (when (numberp port)
-                                         `("--port" ,(format "%s" port)
-                                           "--port-retries" "0")))))
-    (cl-loop repeat 30
-             until (ein:jupyter-server-ready-p)
-             do (sleep-for 0 500)
-             finally do
-             (if-let ((buffer (get-buffer *ein:jupyter-server-buffer-name*))
-                      (url-or-port (ein:jupyter-my-url-or-port)))
-                 (with-current-buffer buffer
-                   (setq ein:jupyter-server-notebook-directory
-                         (convert-standard-filename notebook-directory))
-                   (add-hook 'kill-buffer-query-functions
-                             (lambda () (or (not (ein:jupyter-server-process))
-                                            (ein:jupyter-server-stop t url-or-port)))
-                             nil t))
-               (ein:log 'warn "Jupyter server failed to start, cancelling operation")))
+  (let* ((proc (ein:jupyter-server--run *ein:jupyter-server-buffer-name*
+                                        server-command
+                                        notebook-directory
+                                        (when (numberp port)
+                                          `("--port" ,(format "%s" port)
+                                            "--port-retries" "0"))))
+         (url-or-port
+          (cl-loop repeat 60
+                   while (process-live-p proc)
+                   for url = (ein:jupyter-server-ready-p)
+                   when url return url
+                   do (accept-process-output proc 0.5))))
+    (if-let ((buffer (get-buffer *ein:jupyter-server-buffer-name*))
+             (url url-or-port))
+        (with-current-buffer buffer
+          (add-hook 'kill-buffer-query-functions
+                    (lambda () (or (not (ein:jupyter-server-process))
+                                   (ein:jupyter-server-stop t url)))
+                    nil t))
+      (ein:log 'warn "Jupyter server failed to start, cancelling operation")
+      (when (process-live-p proc)
+        (delete-process proc)))
     (when-let ((login-p (not no-login-p))
-               (url-or-port (ein:jupyter-my-url-or-port)))
+               (url-or-port url-or-port))
       (unless login-callback
         (setq login-callback #'ignore))
       (add-function :after (var login-callback)
@@ -399,13 +439,14 @@ server command."
                                            (cl-search "request curl"
                                                       (process-name proc)))
                                          (process-list)))
-                   do (sleep-for 0 500))
+                   do (sleep-for 0.5))
           (cond (my-p
-                 (-when-let* ((proc (ein:jupyter-server-process))
-                              (pid (process-id proc)))
+                 (-when-let* ((proc (ein:jupyter-server-process)))
                    (run-at-time 2 nil
-                                (lambda ()
-                                  (signal-process pid (if (eq system-type 'windows-nt) 9 15))))
+                                (lambda (process)
+                                  (when (process-live-p process)
+                                    (delete-process process)))
+                                proc)
                    ;; NotebookPasswordApp::shutdown_server() also ignores req response.
                    (ein:query-singleton-ajax (ein:url url-or-port "api/shutdown")
                                              :type "POST")))

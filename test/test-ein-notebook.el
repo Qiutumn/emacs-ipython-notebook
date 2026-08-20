@@ -138,6 +138,21 @@ is not found."
                           (ein:notebook-to-json ein:%notebook%))
                5))))
 
+(ert-deftest ein:notebook-to-json-keeps-empty-metadata-an-object ()
+  (with-current-buffer (ein:testing-notebook-make-empty)
+    ;; Reproduce a newly opened notebook for which kernelspec discovery has
+    ;; not populated metadata yet.
+    (setf (ein:$notebook-metadata ein:%notebook%) nil
+          (ein:$notebook-kernelspec ein:%notebook%) nil)
+    (let* ((data (ein:notebook-to-json ein:%notebook%))
+           (metadata (alist-get 'metadata data))
+           (json (ein:json-encode data)))
+      (should (hash-table-p metadata))
+      (should (string-match-p
+               "\\\"metadata\\\"[[:space:]]*:[[:space:]]*{}" json))
+      (should-not (string-match-p
+                   "\\\"metadata\\\"[[:space:]]*:[[:space:]]*null" json)))))
+
 (ert-deftest ein:notebook-from-json-empty ()
   (with-current-buffer (ein:testing-notebook-make-empty)
     (should (ein:$notebook-p ein:%notebook%))

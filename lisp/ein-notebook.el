@@ -486,9 +486,15 @@ This is equivalent to do ``C-c`` in the console program."
            (4 (ein:write-nbformat4-worksheets notebook))
            (t (ein:log 'error "nbformat version %s unsupported"
                        (ein:$notebook-nbformat notebook))))))
-    (awhen (cdr (assq 'metadata data))
+    (let ((metadata (cdr (assq 'metadata data))))
+      ;; With plist JSON objects, both an empty object and JSON null decode to
+      ;; nil.  Never write nil back for notebook metadata: nbformat requires an
+      ;; object, and contents managers such as Jupytext call `.get' on it.
       (setf (alist-get 'metadata data)
-            (plist-put it :name (ein:$notebook-notebook-name notebook))))
+            (if metadata
+                (plist-put metadata :name
+                           (ein:$notebook-notebook-name notebook))
+              (make-hash-table))))
     (awhen (ein:$notebook-nbformat-minor notebook)
       ;; EIN serializes stable cell IDs.  They became valid in nbformat 4.5,
       ;; so older v4 notebooks must be upgraded when saved.

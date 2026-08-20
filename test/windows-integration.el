@@ -138,6 +138,11 @@
                 (error "New notebook has no editable cell"))
               (with-current-buffer (ein:cell-buffer cell)
                 (ein:cell-set-text cell "print('EIN_NEW_NOTEBOOK_SAVE_OK')")))
+            ;; Empty JSON objects decode to nil in EIN's plist representation.
+            ;; Exercise the exact state that previously made Jupytext receive
+            ;; `"metadata": null' and fail with NoneType.get.
+            (setf (ein:$notebook-metadata new-notebook) nil
+                  (ein:$notebook-kernelspec new-notebook) nil)
             (ein:notebook-save-notebook
              new-notebook (lambda () (setq new-notebook-saved t)) nil
              (lambda (&rest args)

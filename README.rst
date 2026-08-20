@@ -77,6 +77,10 @@ Start EIN using **ONE** of the following:
 * ``M-x ein:run`` launches a jupyter process from emacs, or,
 * ``M-x ein:login`` to a running jupyter server, or,
 
+``ein:login`` accepts the complete URL printed by Jupyter, including its
+``?token=...`` query.  EIN extracts the token for authentication and keeps the
+server's base URL free of credentials.
+
 ``M-x ein:stop`` prompts to halt local and remote jupyter services.
 
 Alternatively, ob-ein_.

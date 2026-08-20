@@ -138,6 +138,36 @@ Return nil if unclear what, if any, authentication applies."
           ((and (stringp token) (eq password-p :json-false)) token)
           (t nil))))
 
+(defun ein:notebooklist--clean-url-and-token (url-or-port)
+  "Return (CLEAN-URL . TOKEN) parsed from URL-OR-PORT.
+
+Jupyter prints login links containing a token query parameter.  Remove that
+parameter from the persistent server URL and return its decoded value so API
+paths, buffer names, and logs do not retain authentication data.  Preserve
+unrelated query parameters."
+  (let* ((parsed-url (url-generic-parse-url (ein:url url-or-port)))
+         (path-and-query (url-path-and-query parsed-url))
+         (path (or (car path-and-query) ""))
+         (query (cdr path-and-query))
+         token
+         remaining)
+    (dolist (component (and query (split-string query "[&;]" t)))
+      (let* ((equals (string-match "=" component))
+             (raw-name (if equals (substring component 0 equals) component))
+             (raw-value (if equals (substring component (1+ equals)) ""))
+             (name (url-unhex-string raw-name)))
+        (if (string= (downcase name) "token")
+            (unless token
+              (setq token (url-unhex-string raw-value)))
+          (push component remaining))))
+    (setq remaining (nreverse remaining))
+    (setf (url-filename parsed-url)
+          (concat path
+                  (when remaining
+                    (concat "?" (mapconcat #'identity remaining "&"))))
+          (url-target parsed-url) nil)
+    (cons (ein:url (url-recreate-url parsed-url)) token)))
+
 (defun ein:notebooklist-ask-url-or-port ()
   (let* ((default (ein:url (aif (ein:get-notebook)
                                (ein:$notebook-url-or-port it)
@@ -710,6 +740,10 @@ ein:notebooklist-open*."
                  ,(when current-prefix-arg
                     (read-no-blanks-input "Cookie content: "))
 		 nil))
+  (let ((clean-url-and-token
+         (ein:notebooklist--clean-url-and-token url-or-port)))
+    (setq url-or-port (car clean-url-and-token)
+          token (or token (cdr clean-url-and-token))))
   (when cookie-name
     (let* ((parsed-url (url-generic-parse-url (file-name-as-directory url-or-port)))
            (domain (url-host parsed-url))

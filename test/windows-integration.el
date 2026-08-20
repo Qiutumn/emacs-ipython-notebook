@@ -64,10 +64,10 @@
             (message "Native Windows server discovery: %s" url)
 
             (ein:notebooklist-login
-             url
+             (concat url "/?token=" token)
              (lambda (buffer _url)
                (setq login-buffer buffer))
-             nil nil token)
+             nil nil nil)
             (eintest:windows-wait-until
              (lambda () (buffer-live-p login-buffer)) 30 "EIN login")
 

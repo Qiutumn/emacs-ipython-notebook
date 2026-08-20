@@ -30,6 +30,15 @@
         do (should (equal (ein:url 8888 a "b/")
                           "http://127.0.0.1:8888/a/b"))))
 
+(ert-deftest ein-url-path-precedes-query ()
+  (should
+   (equal (ein:url "http://localhost:8889/?token=test-token"
+                   "api" "kernelspecs")
+          "http://127.0.0.1:8889/api/kernelspecs?token=test-token"))
+  (should
+   (equal (ein:url "https://example.test/jupyter/?page=1" "api/sessions")
+          "https://example.test/jupyter/api/sessions?page=1")))
+
 (ert-deftest ein-trim-simple ()
   (should (equal (ein:trim "a") "a"))
   (should (equal (ein:trim "  a  ") "a"))

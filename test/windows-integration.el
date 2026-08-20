@@ -3,9 +3,12 @@
 ;; Run with:
 ;;   emacs --batch -Q -l test/windows-integration.el
 ;; EIN_TEST_PYTHON may name the Python executable that provides Jupyter.
+;; EIN_TEST_JUPYTER_SUBCOMMAND may be "server" (default) or "notebook".
 
 (unless (eq system-type 'windows-nt)
   (error "This integration test requires native Windows Emacs"))
+
+(setq load-prefer-newer t)
 
 (let ((directory (getenv "EIN_TEST_PACKAGE_DIR")))
   (when directory
@@ -23,6 +26,7 @@
 
 (require 'ein-jupyter)
 (require 'ein-notebook)
+(require 'ein-notebooklist)
 
 (defun eintest:windows-wait-until (predicate timeout label)
   "Wait up to TIMEOUT seconds for PREDICATE while servicing processes."
@@ -37,6 +41,9 @@
                    (executable-find "python")))
        (_ (unless python
             (error "Set EIN_TEST_PYTHON to a Python executable with Jupyter")))
+       (subcommand (or (getenv "EIN_TEST_JUPYTER_SUBCOMMAND") "server"))
+       (_ (unless (member subcommand '("server" "notebook"))
+            (error "EIN_TEST_JUPYTER_SUBCOMMAND must be server or notebook")))
        (command (list python "-m" "jupyter"))
        (directory (make-temp-file "ein-native-windows-" t))
        (listener (make-network-process :name "ein-port-probe"
@@ -44,16 +51,22 @@
                                        :service t :noquery t))
        (port (process-contact listener :service))
        (token "ein-native-windows-test")
-       url notebook login-buffer notebook-ready saved failure)
+       url notebook login-buffer notebook-ready saved save-error
+       new-notebook new-notebook-ready new-notebook-saved
+       new-notebook-save-error failure)
   (delete-process listener)
   (copy-file (expand-file-name "features/undo.ipynb" default-directory)
              (expand-file-name "native-windows.ipynb" directory))
   (setq ein:jupyter-server-command command
-        ein:jupyter-server-use-subcommand "server"
+        ein:jupyter-server-use-subcommand subcommand
         ein:jupyter-server-args
-        '("--no-browser"
-          "--IdentityProvider.token=ein-native-windows-test"
-          "--ServerApp.password="))
+        (append
+         '("--no-browser")
+         (if (string= subcommand "notebook")
+             '("--NotebookApp.token=ein-native-windows-test"
+               "--NotebookApp.password=")
+           '("--IdentityProvider.token=ein-native-windows-test"
+             "--ServerApp.password="))))
   (unwind-protect
       (condition-case err
           (progn
@@ -99,15 +112,66 @@
             (ein:notebook-save-notebook
              notebook (lambda () (setq saved t)) nil
              (lambda (&rest args)
-               (error "Notebook save failed: %S" args)))
+               (setq save-error args)))
             (eintest:windows-wait-until
-             (lambda () saved) 30 "notebook save")
+             (lambda () (or saved save-error)) 30 "notebook save")
+            (when save-error
+              (error "Notebook save failed: %S" save-error))
             (with-temp-buffer
               (insert-file-contents
                (expand-file-name "native-windows.ipynb" directory))
               (unless (search-forward "EIN_NATIVE_WINDOWS_OK" nil t)
                 (error "Saved notebook does not contain executed source")))
             (message "Native Windows execute and save: ok")
+
+            (ein:notebooklist-new-notebook
+             url "python3"
+             (lambda (created-notebook _created)
+               (setq new-notebook created-notebook
+                     new-notebook-ready t))
+             t nil "")
+            (eintest:windows-wait-until
+             (lambda () new-notebook-ready) 45 "new notebook and kernel startup")
+            (let* ((worksheet (car (ein:$notebook-worksheets new-notebook)))
+                   (cell (car (ein:worksheet-get-cells worksheet))))
+              (unless cell
+                (error "New notebook has no editable cell"))
+              (with-current-buffer (ein:cell-buffer cell)
+                (ein:cell-set-text cell "print('EIN_NEW_NOTEBOOK_SAVE_OK')")))
+            (ein:notebook-save-notebook
+             new-notebook (lambda () (setq new-notebook-saved t)) nil
+             (lambda (&rest args)
+               (setq new-notebook-save-error args)))
+            (eintest:windows-wait-until
+             (lambda () (or new-notebook-saved new-notebook-save-error))
+             30 "new notebook save")
+            (when new-notebook-save-error
+              (error "New notebook save failed: %S"
+                     new-notebook-save-error))
+            (with-temp-buffer
+              (insert-file-contents
+               (expand-file-name
+                (ein:$notebook-notebook-path new-notebook) directory))
+              (unless (search-forward "EIN_NEW_NOTEBOOK_SAVE_OK" nil t)
+                (error "Newly saved notebook does not contain edited source")))
+            (message "Native Windows create and save new notebook: ok")
+
+            (let* ((worksheet (car (ein:$notebook-worksheets new-notebook)))
+                   (cell (car (ein:worksheet-get-cells worksheet))))
+              (with-current-buffer (ein:cell-buffer cell)
+                (ein:cell-set-text
+                 cell "print('EIN_NEW_NOTEBOOK_CLOSE_SAVE_OK')")))
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (&rest _args) t)))
+              (unless (ein:notebook-ask-save new-notebook)
+                (error "Synchronous save before close failed")))
+            (with-temp-buffer
+              (insert-file-contents
+               (expand-file-name
+                (ein:$notebook-notebook-path new-notebook) directory))
+              (unless (search-forward "EIN_NEW_NOTEBOOK_CLOSE_SAVE_OK" nil t)
+                (error "Close-saved notebook does not contain edited source")))
+            (message "Native Windows save before close: ok")
 
             (ein:jupyter-server-stop nil url)
             (eintest:windows-wait-until

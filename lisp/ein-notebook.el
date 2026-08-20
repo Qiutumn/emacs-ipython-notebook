@@ -563,13 +563,21 @@ This is equivalent to do ``C-c`` in the console program."
 ;;    This should save the latest WS0.  To do so, WS0 at the point (2)
 ;;    must be cached in the worksheet slot `:saved-cells'.
 
-(cl-defun ein:notebook-save-notebook-error (notebook &key symbol-status
+(cl-defun ein:notebook-save-notebook-error (notebook errback
+                                                     &key data response
+                                                     symbol-status error-thrown
                                                      &allow-other-keys)
   (if (eq symbol-status 'user-cancel)
       (ein:log 'info "Cancelled save.")
     (ein:log 'warn "Failed saving notebook!")
     (ein:events-trigger (ein:$notebook-events notebook)
-                        'notebook_save_failed.Notebook)))
+                        'notebook_save_failed.Notebook))
+  (when errback
+    (funcall errback
+             :data data
+             :response response
+             :symbol-status symbol-status
+             :error-thrown error-thrown)))
 
 (defun ein:notebook-rename-command (path)
   "Rename current notebook and save it immediately.

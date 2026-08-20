@@ -28,6 +28,7 @@
 (require 'websocket)
 (require 'ein-core)
 (require 'ein-classes)
+(require 'ein-query)
 (require 'url-cookie)
 (require 'request)
 
@@ -44,6 +45,7 @@
 to transcribe any cookies stored in `request-cookie-alist' during
 earlier calls to `request' (request.el)."
   (let* ((parsed-url (url-generic-parse-url url))
+         (request--curl-cookie-jar (ein:query-cookie-jar url))
          (host-port (format "%s:%s" (url-host parsed-url) (url-port parsed-url)))
          (base-url (file-name-as-directory (url-filename parsed-url)))
          (securep (string-match "^wss://" url))

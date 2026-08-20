@@ -37,12 +37,41 @@
   :group 'ein)
 
 (defvar ein:query-xsrf-cache (make-hash-table :test 'equal)
-  "Remember the last xsrf token by host.
+  "Remember the last xsrf token by server origin.
 This is a hack in case we catch cookie jar in transition.
 The proper fix is to sempahore between competing curl processes.")
 
 (defvar ein:query-authorization-tokens (make-hash-table :test 'equal)
   "Jupyterhub authorization token by (host . username).")
+
+(defun ein:query-origin-key (url)
+  "Return a normalized scheme, host, and port key for URL."
+  (let* ((parsed-url (url-generic-parse-url (ein:url url)))
+         (scheme (downcase (or (url-type parsed-url) "http")))
+         (scheme (pcase scheme
+                   ("ws" "http")
+                   ("wss" "https")
+                   (_ scheme)))
+         (host (downcase (or (url-host parsed-url) "")))
+         (host (if (string= host "localhost") "127.0.0.1" host))
+         (port (or (url-port parsed-url)
+                   (url-scheme-get-property scheme 'default-port))))
+    (format "%s://%s:%s" scheme host port)))
+
+(defun ein:query-cookie-jar (url)
+  "Return the request.el cookie jar to use for URL.
+
+Local Jupyter servers on different ports have different XSRF secrets, while
+HTTP cookies normally ignore ports.  Give each local server origin a separate
+jar so connecting to port 8889 cannot invalidate a session on port 8888."
+  (let* ((parsed-url (url-generic-parse-url (ein:url url)))
+         (host (downcase (or (url-host parsed-url) ""))))
+    (if (member host '("localhost" "127.0.0.1" "::1"))
+        (expand-file-name
+         (format "curl-cookie-jar-%s"
+                 (secure-hash 'sha256 (ein:query-origin-key url)))
+         request-storage-directory)
+      (request--curl-cookie-jar))))
 
 (defun ein:query-get-cookies (host path-prefix)
   "Return (:path :expire :name :value) for HOST, matching PATH-PREFIX."
@@ -58,6 +87,7 @@ The proper fix is to sempahore between competing curl processes.")
 (defun ein:query-prepare-header (url settings &optional securep)
   "Ensure that REST calls to the jupyter server have the correct _xsrf argument."
   (let* ((host (url-host (url-generic-parse-url url)))
+         (origin-key (ein:query-origin-key url))
          (paths* (let* ((warning-minimum-level :emergency)
                         (warning-minimum-log-level :emergency)
                         (root-url (car (ein:notebooklist-parse-nbpath url))))
@@ -78,7 +108,7 @@ The proper fix is to sempahore between competing curl processes.")
                              (request-cookie-alist host path securep))
                            paths))
          (xsrf (or (cdr (assoc-string "_xsrf" cookies))
-                   (gethash host ein:query-xsrf-cache)))
+                   (gethash origin-key ein:query-xsrf-cache)))
          (key (ein:query-divine-authorization-tokens-key url))
          (token (aand key
                       (gethash key ein:query-authorization-tokens)
@@ -94,7 +124,7 @@ The proper fix is to sempahore between competing curl processes.")
       (setq settings (plist-put settings :headers
                                 (append (plist-get settings :headers)
                                         (list (cons "X-XSRFTOKEN" xsrf)))))
-      (setf (gethash host ein:query-xsrf-cache) xsrf))
+      (setf (gethash origin-key ein:query-xsrf-cache) xsrf))
     (setq settings (plist-put settings :encoding 'binary))
     settings))
 
@@ -113,7 +143,8 @@ get (\"hub.data8x.berkeley.edu\" . \"806b3e7\")"
                                         &key (timeout ein:query-timeout)
                                         &allow-other-keys)
   (if (executable-find request-curl)
-      (let ((request-backend 'curl))
+      (let ((request-backend 'curl)
+            (request--curl-cookie-jar (ein:query-cookie-jar url)))
         (when timeout
           (setq settings (plist-put settings :timeout (/ timeout 1000.0))))
         (unless (plist-member settings :sync)

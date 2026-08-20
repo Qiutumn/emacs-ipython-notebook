@@ -113,12 +113,14 @@ ERRBACK of arity 1 for the contents."
                            0
                            (or (cl-position ?/ (ein:$content-path content) :from-end t)
                                0)))))
-    (ignore-errors
-      (ein:json-encode `((type . ,(ein:$content-type content))
-                         (name . ,(ein:$content-name content))
-                         (path . ,path)
-                         (format . ,(or (ein:$content-format content) "json"))
-                         (content ,@(ein:$content-raw-content content)))))))
+    ;; Sending an empty request body after a JSON encoding failure makes
+    ;; Jupyter report an opaque HTTP 500.  Preserve the local notebook and
+    ;; expose the actual encoding error instead.
+    (ein:json-encode `((type . ,(ein:$content-type content))
+                       (name . ,(ein:$content-name content))
+                       (path . ,path)
+                       (format . ,(or (ein:$content-format content) "json"))
+                       (content ,@(ein:$content-raw-content content))))))
 
 (defun ein:content-from-notebook (nb)
   (let ((nb-content (ein:notebook-to-json nb)))
@@ -243,12 +245,39 @@ ERRBACK of arity 1 for the contents."
   (when callback
     (apply callback cbargs)))
 
-(cl-defun ein:content-save-error (url errcb errcbargs &key response &allow-other-keys)
-  (ein:log 'error
-    "ein:content-save-error: %s %s."
-    url (error-message-string (request-response-error-thrown response)))
-  (when errcb
-    (apply errcb errcbargs)))
+(cl-defun ein:content-save-error (url errcb errcbargs
+                                      &key data response symbol-status
+                                      error-thrown
+                                      &allow-other-keys)
+  (let* ((status (and response (request-response-status-code response)))
+         (response-error (and response
+                              (request-response-error-thrown response)))
+         (detail (and data
+                      (replace-regexp-in-string
+                       "[\r\n]+" " "
+                       (string-trim (if (stringp data)
+                                        data
+                                      (format "%S" data))))))
+         (detail (and detail
+                      (if (> (length detail) 2000)
+                          (concat (substring detail 0 2000) "...")
+                        detail))))
+    (ein:log 'error
+      "ein:content-save-error: %s status %s: %s%s."
+      url (or status "unknown")
+      (if response-error
+          (error-message-string response-error)
+        "request failed")
+      (if (and detail (not (string-empty-p detail)))
+          (format "; server response: %s" detail)
+        ""))
+    (when errcb
+      (apply errcb
+             (append errcbargs
+                     (list :data data
+                           :response response
+                           :symbol-status symbol-status
+                           :error-thrown error-thrown))))))
 
 (defun ein:content-rename (content new-path &optional callback cbargs)
   (ein:query-singleton-ajax

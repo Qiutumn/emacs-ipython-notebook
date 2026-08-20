@@ -699,10 +699,10 @@ or even this (if you want fast Emacs start-up):
                                    (cons "--junk-session-cookies" request-curl-options)
                                  request-curl-options))
          (parsed-url (url-generic-parse-url (file-name-as-directory url-or-port)))
-         (host (url-host parsed-url))
+         (origin-key (ein:query-origin-key url-or-port))
          (query (cdr (url-path-and-query parsed-url))))
     (when reset-p
-      (remhash host ein:query-xsrf-cache))
+      (remhash origin-key ein:query-xsrf-cache))
     (ein:query-singleton-ajax
      (ein:url url-or-port (if query "" "login"))
      ;; do not use :type "POST" here (see git history)
@@ -748,7 +748,8 @@ ein:notebooklist-open*."
     (let* ((parsed-url (url-generic-parse-url (file-name-as-directory url-or-port)))
            (domain (url-host parsed-url))
            (securep (string-match "^wss://" url-or-port))
-           (line (mapconcat #'identity (list domain "FALSE" (car (url-path-and-query parsed-url)) (if securep "TRUE" "FALSE") "0" cookie-name (concat cookie-content "\n")) "\t")))
+           (line (mapconcat #'identity (list domain "FALSE" (car (url-path-and-query parsed-url)) (if securep "TRUE" "FALSE") "0" cookie-name (concat cookie-content "\n")) "\t"))
+           (request--curl-cookie-jar (ein:query-cookie-jar url-or-port)))
       (write-region line nil (request--curl-cookie-jar) 'append)))
   (let ((token (or token (ein:notebooklist-token-or-password url-or-port))))
     (cond ((null token) ;; don't know
